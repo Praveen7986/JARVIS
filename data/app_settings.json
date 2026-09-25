@@ -1,0 +1,49 @@
+{
+    "app": {
+        "start_with_windows": true,
+        "first_launch": false,
+        "theme": "dark_glass",
+        "active_widgets": [
+            "music_player",
+            "github_radar"
+        ]
+    },
+    "widgets": {
+        "laptop_usage": {
+            "enabled": true,
+            "idle_threshold_seconds": 300,
+            "always_on_top": false,
+            "opacity": 1.0,
+            "x": 1566,
+            "y": 170,
+            "width": 320,
+            "height": 180,
+            "screen_name": "\\\\.\\DISPLAY1",
+            "start_with_windows": false
+        },
+        "music_player": {
+            "enabled": false,
+            "always_on_top": false,
+            "opacity": 1.0,
+            "x": 1555,
+            "y": 263,
+            "width": 350,
+            "height": 175,
+            "screen_name": "\\\\.\\DISPLAY1"
+        },
+        "github_radar": {
+            "enabled": false,
+            "username": "Praveen7986",
+            "token": "",
+            "refresh_interval": 5,
+            "theme": "emerald",
+            "always_on_top": false,
+            "opacity": 1.0,
+            "x": 1140,
+            "y": 40,
+            "width": 760,
+            "height": 205,
+            "screen_name": "\\\\.\\DISPLAY1"
+        }
+    }
+}
