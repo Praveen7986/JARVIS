@@ -1,10 +1,10 @@
 """
 Music Player Desktop Widget UI with Dynamic Cover Art Background & Real-Time Audio Visualizer.
 Features:
-- Instantaneous SMTC and local media response
-- Pre-cached full-bleed album art background with smooth acrylic glass overlay
+- Instantaneous SMTC (Spotify, Chrome, Edge, Apple Music) and local media sync
+- Pre-cached full-bleed album art background with smooth acrylic glass overlay (no artifacts)
 - Sound-driven real-time audio visualizer responding to live song frequency spectrum
-- Sub-second smooth timeline tracking and responsive seek bar
+- Sub-second smooth timeline tracking and responsive seek bar (accurate 02:07 / 03:34 formatting)
 - Reference-styled media controls (circular glowing play button with minimal prev/next arrows)
 """
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 def extract_dominant_color_fast(pixmap: Optional[QPixmap]) -> QColor:
     """Fast vibrancy-tuned dominant color extraction from cover art."""
     if not pixmap or pixmap.isNull():
-        return QColor(245, 158, 11)  # Warm amber default
+        return QColor(56, 189, 248)  # Glowing cyan/sky by default
 
     try:
         # Scale to 16x16 for instant color sampling
@@ -60,7 +60,7 @@ def extract_dominant_color_fast(pixmap: Optional[QPixmap]) -> QColor:
     except Exception as e:
         logger.debug(f"Dominant color extraction error: {e}")
 
-    return QColor(245, 158, 11)
+    return QColor(56, 189, 248)
 
 
 class CircularPlayButton(QPushButton):
@@ -70,8 +70,9 @@ class CircularPlayButton(QPushButton):
         super().__init__(parent)
         self.setFixedSize(46, 46)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("background: transparent; border: none;")
         self.is_playing = False
-        self.accent_color = QColor(245, 158, 11)
+        self.accent_color = QColor(56, 189, 248)
 
     def set_playing(self, playing: bool):
         if self.is_playing != playing:
@@ -144,6 +145,7 @@ class MinimalMediaArrowButton(QPushButton):
         self.direction = direction
         self.setFixedSize(32, 32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("background: transparent; border: none;")
         self.is_hovered = False
 
     def enterEvent(self, event):
@@ -210,9 +212,10 @@ class VisualizerWave(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(58, 58)
+        self.setStyleSheet("background: transparent; border: none;")
         self.is_playing = False
         self.cover_pixmap: Optional[QPixmap] = None
-        self.accent_color = QColor(245, 158, 11)
+        self.accent_color = QColor(56, 189, 248)
         self.bar_heights = [6, 10, 8, 12, 6]
 
         # Real-time audio spectrum engine
@@ -315,7 +318,7 @@ class MusicPlayerWidget(BaseWidget):
 
         self.current_cover_pixmap: Optional[QPixmap] = None
         self._cached_bg_pixmap: Optional[QPixmap] = None
-        self.accent_color = QColor(245, 158, 11)
+        self.accent_color = QColor(56, 189, 248)
         self.is_internet_app_active = False
         self._is_seeking = False
         self._current_pos_ms = 0
@@ -347,12 +350,23 @@ class MusicPlayerWidget(BaseWidget):
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Card container
+        # Card container with completely transparent background
         self.card = QFrame(self)
         self.card.setObjectName("musicCard")
+        self.card.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.card.setStyleSheet("""
+            #musicCard {
+                background: transparent;
+                border: none;
+            }
+            QLabel {
+                background: transparent;
+                border: none;
+            }
+        """)
 
         card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(20, 16, 20, 16)
+        card_layout.setContentsMargins(18, 16, 18, 16)
         card_layout.setSpacing(8)
 
         # 1. Top Bar: Visualizer Tile & Track Metadata
@@ -366,22 +380,22 @@ class MusicPlayerWidget(BaseWidget):
         info_col.setSpacing(3)
 
         self.lbl_now_playing = QLabel("NOW PLAYING")
-        self.lbl_now_playing.setStyleSheet("color: rgba(255, 255, 255, 0.60); font-size: 10px; font-weight: 700; letter-spacing: 1.5px;")
+        self.lbl_now_playing.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 10px; font-weight: 700; letter-spacing: 1.5px;")
         info_col.addWidget(self.lbl_now_playing)
 
         self.lbl_title = QLabel("Midnight City Lofi")
-        self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 16px; font-weight: 700; font-family: 'Segoe UI';")
+        self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 15px; font-weight: 700; font-family: 'Segoe UI';")
         info_col.addWidget(self.lbl_title)
 
         self.lbl_artist = QLabel("Aether Beats")
-        self.lbl_artist.setStyleSheet("color: #FBBF24; font-size: 13px; font-weight: 600;")
+        self.lbl_artist.setStyleSheet("color: #38BDF8; font-size: 13px; font-weight: 600;")
         info_col.addWidget(self.lbl_artist)
 
         top_layout.addLayout(info_col)
         top_layout.addStretch()
         card_layout.addLayout(top_layout)
 
-        card_layout.addSpacing(4)
+        card_layout.addSpacing(2)
 
         # 2. Seek Bar Slider
         self.slider_seek = QSlider(Qt.Orientation.Horizontal)
@@ -393,12 +407,12 @@ class MusicPlayerWidget(BaseWidget):
         self._update_slider_style()
         card_layout.addWidget(self.slider_seek)
 
-        # 3. Bottom Bar: Time labels & Reference-Styled Playback Controls
+        # 3. Bottom Bar: Time labels & Playback Controls
         bottom_layout = QHBoxLayout()
         bottom_layout.setSpacing(10)
 
         self.lbl_time = QLabel("00:00 / 03:34")
-        self.lbl_time.setStyleSheet("color: rgba(255, 255, 255, 0.70); font-size: 11px; font-weight: 600;")
+        self.lbl_time.setStyleSheet("color: rgba(255, 255, 255, 0.80); font-size: 11px; font-weight: 600;")
         bottom_layout.addWidget(self.lbl_time)
         bottom_layout.addStretch()
 
@@ -487,22 +501,23 @@ class MusicPlayerWidget(BaseWidget):
             sy = (scaled.height() - card_h) // 2
             painter.drawPixmap(0, 0, scaled, sx, sy, card_w, card_h)
 
+            # Deep dark-glass gradient overlay across the entire card
             overlay_grad = QLinearGradient(0, 0, 0, card_h)
-            overlay_grad.setColorAt(0, QColor(10, 15, 26, 120))
-            overlay_grad.setColorAt(0.5, QColor(8, 12, 22, 160))
-            overlay_grad.setColorAt(1, QColor(5, 8, 15, 200))
+            overlay_grad.setColorAt(0, QColor(10, 15, 26, 150))
+            overlay_grad.setColorAt(0.5, QColor(8, 12, 22, 185))
+            overlay_grad.setColorAt(1, QColor(5, 8, 15, 215))
             painter.setBrush(QBrush(overlay_grad))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRect(0, 0, card_w, card_h)
         else:
             base_grad = QLinearGradient(0, 0, 0, card_h)
-            base_grad.setColorAt(0, QColor(26, 32, 44, 240))
-            base_grad.setColorAt(1, QColor(15, 18, 26, 250))
+            base_grad.setColorAt(0, QColor(26, 32, 44, 245))
+            base_grad.setColorAt(1, QColor(15, 18, 26, 252))
             painter.setBrush(QBrush(base_grad))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRect(0, 0, card_w, card_h)
 
-        # Border
+        # Refined glass border
         painter.setPen(QPen(QColor(255, 255, 255, 45), 1.2))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(0, 0, card_w, card_h, 20, 20)
@@ -585,6 +600,10 @@ class MusicPlayerWidget(BaseWidget):
     def _apply_track_info(self, title: str, artist: str, app_name: str, is_playing: bool, pos_ms: int, dur_ms: int):
         self.lbl_title.setText(title)
         self.lbl_artist.setText(artist)
+        if app_name and app_name != "Internet App":
+            self.lbl_now_playing.setText(f"NOW PLAYING • {app_name.upper()}")
+        else:
+            self.lbl_now_playing.setText("NOW PLAYING")
 
         self._on_playback_state_changed(is_playing)
         if dur_ms > 0:
@@ -597,18 +616,18 @@ class MusicPlayerWidget(BaseWidget):
 
     @Slot(int, int)
     def _on_timeline_updated(self, pos_ms: int, dur_ms: int):
-        self._current_pos_ms = pos_ms
+        self._current_pos_ms = max(0, pos_ms)
         self._current_dur_ms = max(1000, dur_ms)
 
         if not self._is_seeking and dur_ms > 0:
-            ratio = min(1.0, max(0.0, pos_ms / float(dur_ms)))
+            ratio = min(1.0, max(0.0, self._current_pos_ms / float(self._current_dur_ms)))
             val = int(ratio * 1000)
             self.slider_seek.blockSignals(True)
             self.slider_seek.setValue(val)
             self.slider_seek.blockSignals(False)
 
-        pos_str = AudioPlayerEngine.format_time(pos_ms)
-        dur_str = AudioPlayerEngine.format_time(dur_ms)
+        pos_str = AudioPlayerEngine.format_time(self._current_pos_ms)
+        dur_str = AudioPlayerEngine.format_time(self._current_dur_ms)
         self.lbl_time.setText(f"{pos_str} / {dur_str}")
 
     # --- Controls ---

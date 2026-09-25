@@ -1,11 +1,11 @@
 """
 Windows System Media Transport Controls (SMTC) Session Watcher.
-Extracts live playing media info, cover art, timeline with smooth real-time interpolation,
-and controls from internet apps (Spotify, YouTube / Chrome / Edge, Apple Music, VLC).
-High-performance, event-driven and low-latency.
+Extracts live playing media info, cover art, and timeline with smooth real-time interpolation
+from Spotify, YouTube / Chrome / Edge, Apple Music, and Windows Media Player.
 """
 
 import asyncio
+import datetime
 import logging
 import threading
 import time
@@ -25,8 +25,22 @@ except Exception as e:
     logger.warning(f"WinRT media control not available: {e}")
 
 
+def _timespan_to_ms(ts) -> int:
+    """Safely converts WinRT TimeSpan / datetime.timedelta to milliseconds."""
+    if ts is None:
+        return 0
+    if isinstance(ts, (datetime.timedelta,)):
+        return int(ts.total_seconds() * 1000)
+    if hasattr(ts, "total_seconds"):
+        return int(ts.total_seconds() * 1000)
+    if hasattr(ts, "duration"):
+        # 100-nanosecond units to milliseconds
+        return int(ts.duration / 10000)
+    return 0
+
+
 class WindowsMediaWatcher(QObject):
-    """Monitors live Windows media playback sessions with smooth timeline tracking."""
+    """Monitors live Windows media playback sessions with smooth sub-second timeline tracking."""
 
     media_updated = Signal(dict)
     state_changed = Signal(bool)
@@ -55,13 +69,13 @@ class WindowsMediaWatcher(QObject):
         if WINRT_AVAILABLE:
             self._start_async_worker()
 
-        # Fast check timer (250ms for snappy response)
+        # Fast check timer (200ms interval for immediate song change detection)
         self.poll_timer = QTimer(self)
-        self.poll_timer.setInterval(250)
+        self.poll_timer.setInterval(200)
         self.poll_timer.timeout.connect(self._trigger_check)
         self.poll_timer.start()
 
-        # High-precision smooth timeline timer (50ms = 20fps interpolation)
+        # Smooth timeline tick timer (50ms interval = 20fps smooth seek slider & time label)
         self.timeline_timer = QTimer(self)
         self.timeline_timer.setInterval(50)
         self.timeline_timer.timeout.connect(self._tick_timeline)
@@ -101,16 +115,15 @@ class WindowsMediaWatcher(QObject):
             if not self._manager:
                 return
 
-            session = self._manager.get_current_session()
-            if not session:
-                sessions = self._manager.get_sessions()
-                for s in sessions:
-                    info = s.get_playback_info()
-                    if info and info.playback_status == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING:
-                        session = s
-                        break
-                if not session and len(sessions) > 0:
-                    session = sessions[0]
+            sessions = self._manager.get_sessions()
+            playing_session = None
+            for s in sessions:
+                info = s.get_playback_info()
+                if info and info.playback_status == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING:
+                    playing_session = s
+                    break
+
+            session = playing_session or self._manager.get_current_session() or (sessions[0] if len(sessions) > 0 else None)
 
             if not session:
                 if self.has_active_session:
@@ -144,13 +157,13 @@ class WindowsMediaWatcher(QObject):
             if info:
                 is_playing = (info.playback_status == wmc.GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING)
 
-            # Timeline
+            # Timeline properties conversion
             timeline = session.get_timeline_properties()
             pos_ms = 0
             dur_ms = 0
             if timeline:
-                pos_ms = int(timeline.position.duration / 10000) if hasattr(timeline.position, "duration") else 0
-                dur_ms = int(timeline.end_time.duration / 10000) if hasattr(timeline.end_time, "duration") else 0
+                pos_ms = _timespan_to_ms(timeline.position)
+                dur_ms = _timespan_to_ms(timeline.end_time)
 
             # Update timeline base
             self._last_pos_ms = pos_ms
@@ -196,7 +209,7 @@ class WindowsMediaWatcher(QObject):
             self.has_active_session = True
             self.session_status_changed.emit(True)
 
-            # Emit track info
+            # Emit track info when title, artist, or play state changes or new cover arrives
             if (title != self._last_title or artist != self._last_artist or 
                 is_playing != prev_playing or cover_bytes):
                 self._last_title = title
