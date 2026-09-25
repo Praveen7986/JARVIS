@@ -32,17 +32,17 @@
             "screen_name": "\\\\.\\DISPLAY1"
         },
         "github_radar": {
-            "enabled": false,
+            "enabled": true,
             "username": "Praveen7986",
             "token": "",
             "refresh_interval": 5,
-            "theme": "solar_amber",
+            "theme": "emerald",
             "always_on_top": false,
             "opacity": 1.0,
             "x": 45,
             "y": 280,
-            "width": 760,
-            "height": 205,
+            "width": 320,
+            "height": 240,
             "screen_name": "\\\\.\\DISPLAY1"
         }
     }

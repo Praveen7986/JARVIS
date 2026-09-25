@@ -420,6 +420,11 @@ class GitHubRadarWidget(BaseWidget):
         self.lbl_user.setText(f"@{self._username}")
         self._html_url = f"https://github.com/{self._username}"
 
+    def load_state(self):
+        """Restore widget state while ensuring compact monthly layout size."""
+        super().load_state()
+        self.setFixedSize(320, 240)
+
     def save_widget_config(self):
         """Saves current widget config."""
         if not self.widget_manager:
