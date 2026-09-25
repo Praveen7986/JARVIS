@@ -1,16 +1,20 @@
 """
-Music Player Desktop Widget UI with Dynamic Cover Art Background.
-Clean Windows 11 aesthetics, vivid album art background, smooth timeline tracking,
-and reference-styled media controls (circular glowing play button with minimal prev/next arrows).
+Music Player Desktop Widget UI with Dynamic Cover Art Background & Real-Time Audio Visualizer.
+Features:
+- Instantaneous SMTC and local media response
+- Pre-cached full-bleed album art background with smooth acrylic glass overlay
+- Sound-driven real-time audio visualizer responding to live song frequency spectrum
+- Sub-second smooth timeline tracking and responsive seek bar
+- Reference-styled media controls (circular glowing play button with minimal prev/next arrows)
 """
 
 import logging
-from typing import Optional
+from typing import Optional, List
 
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QRect, QPointF
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QBrush, QPen, QLinearGradient,
-    QPixmap, QPainterPath, QPolygonF
+    QPixmap, QPainterPath, QPolygonF, QImage
 )
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QFrame,
@@ -21,53 +25,58 @@ from app.base_widget import BaseWidget
 from .player import AudioPlayerEngine
 from .media_session_watcher import WindowsMediaWatcher
 from .art_cache import ArtworkManager
+from .visualizer_engine import RealtimeAudioSpectrumWorker
 
 logger = logging.getLogger(__name__)
 
 
-def extract_dominant_color(pixmap: Optional[QPixmap]) -> QColor:
-    """Extracts a vibrant accent color from the album artwork."""
+def extract_dominant_color_fast(pixmap: Optional[QPixmap]) -> QColor:
+    """Fast vibrancy-tuned dominant color extraction from cover art."""
     if not pixmap or pixmap.isNull():
-        return QColor(245, 158, 11)  # Warm glowing amber/orange by default
+        return QColor(245, 158, 11)  # Warm amber default
 
     try:
-        img = pixmap.toImage().scaled(24, 24, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+        # Scale to 16x16 for instant color sampling
+        img = pixmap.toImage().scaled(16, 16, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
         r_sum, g_sum, b_sum, count = 0, 0, 0, 0
+        
         for y in range(img.height()):
             for x in range(img.width()):
                 c = img.pixelColor(x, y)
                 brightness = c.red() + c.green() + c.blue()
-                if 40 < brightness < 700:
+                if 50 < brightness < 680:
                     r_sum += c.red()
                     g_sum += c.green()
                     b_sum += c.blue()
                     count += 1
+
         if count > 0:
             avg_r = r_sum // count
             avg_g = g_sum // count
             avg_b = b_sum // count
-            # Boost vibrancy
             base = QColor(avg_r, avg_g, avg_b)
-            h, s, v, a = base.getHsv()
-            return QColor.fromHsv(h, max(140, min(255, int(s * 1.3))), max(180, min(255, int(v * 1.2))))
-    except Exception:
-        pass
+            h, s, v, _ = base.getHsv()
+            return QColor.fromHsv(h, max(150, min(255, int(s * 1.35))), max(190, min(255, int(v * 1.25))))
+    except Exception as e:
+        logger.debug(f"Dominant color extraction error: {e}")
+
     return QColor(245, 158, 11)
 
 
 class CircularPlayButton(QPushButton):
-    """Circular glowing play/pause button matching the user's reference image."""
+    """Circular glowing play/pause button matching the reference design."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(46, 46)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.is_playing = False
-        self.accent_color = QColor(245, 158, 11)  # Warm orange default
+        self.accent_color = QColor(245, 158, 11)
 
     def set_playing(self, playing: bool):
-        self.is_playing = playing
-        self.update()
+        if self.is_playing != playing:
+            self.is_playing = playing
+            self.update()
 
     def set_accent_color(self, color: QColor):
         self.accent_color = color
@@ -84,10 +93,10 @@ class CircularPlayButton(QPushButton):
         radius = (min(w, h) - 4) / 2.0
 
         # Outer soft glow ring
-        glow_color = QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 70)
+        glow_color = QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 75)
         painter.setBrush(QBrush(glow_color))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(QPointF(center_x, center_y), radius + 2, radius + 2)
+        painter.drawEllipse(QPointF(center_x, center_y), radius + 2.5, radius + 2.5)
 
         # Gradient Circle Fill
         grad = QLinearGradient(0, 0, 0, h)
@@ -100,8 +109,8 @@ class CircularPlayButton(QPushButton):
         painter.setBrush(QBrush(grad))
         painter.drawEllipse(QPointF(center_x, center_y), radius, radius)
 
-        # Play / Pause symbol in crisp dark or white
-        icon_color = QColor(20, 20, 20)  # Dark contrast icon on glowing circle
+        # Play / Pause symbol in dark contrast
+        icon_color = QColor(18, 18, 20)
 
         if not self.is_playing:
             # Play triangle
@@ -128,11 +137,11 @@ class CircularPlayButton(QPushButton):
 
 
 class MinimalMediaArrowButton(QPushButton):
-    """Crisp solid arrow button for Previous / Next (reference-styled)."""
+    """Crisp solid chevron arrow button for Previous / Next."""
 
     def __init__(self, direction: str = "next", parent=None):
         super().__init__(parent)
-        self.direction = direction  # "prev" or "next"
+        self.direction = direction
         self.setFixedSize(32, 32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.is_hovered = False
@@ -151,7 +160,7 @@ class MinimalMediaArrowButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        color = QColor(255, 255, 255, 240 if self.is_hovered else 190)
+        color = QColor(255, 255, 255, 245 if self.is_hovered else 190)
         painter.setBrush(QBrush(color))
         painter.setPen(Qt.PenStyle.NoPen)
 
@@ -163,7 +172,6 @@ class MinimalMediaArrowButton(QPushButton):
         arrow_w = 7.0
 
         if self.direction == "next":
-            # Two forward chevron triangles ▶▶
             poly1 = QPolygonF([
                 QPointF(cx - arrow_w, cy - arrow_h / 2.0),
                 QPointF(cx, cy),
@@ -177,7 +185,6 @@ class MinimalMediaArrowButton(QPushButton):
             painter.drawPolygon(poly1)
             painter.drawPolygon(poly2)
         else:
-            # Two backward chevron triangles ◀◀
             poly1 = QPolygonF([
                 QPointF(cx, cy - arrow_h / 2.0),
                 QPointF(cx - arrow_w, cy),
@@ -195,7 +202,10 @@ class MinimalMediaArrowButton(QPushButton):
 
 
 class VisualizerWave(QWidget):
-    """Album art tile with animated audio visualizer equalizer overlay."""
+    """
+    Album art thumbnail tile with live sound-driven frequency spectrum equalizer.
+    Responds to live audio frequencies coming directly from the sound system.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -203,18 +213,17 @@ class VisualizerWave(QWidget):
         self.is_playing = False
         self.cover_pixmap: Optional[QPixmap] = None
         self.accent_color = QColor(245, 158, 11)
-        self.bar_heights = [10, 18, 14, 24, 12]
+        self.bar_heights = [6, 10, 8, 12, 6]
 
-        self.timer = QTimer(self)
-        self.timer.setInterval(120)
-        self.timer.timeout.connect(self._animate)
+        # Real-time audio spectrum engine
+        self._spectrum_worker = RealtimeAudioSpectrumWorker(self)
+        self._spectrum_worker.spectrum_updated.connect(self._on_spectrum_received)
+        self._spectrum_worker.start()
 
     def set_playing(self, playing: bool):
         self.is_playing = playing
-        if playing:
-            self.timer.start()
-        else:
-            self.timer.stop()
+        self._spectrum_worker.set_playing(playing)
+        if not playing:
             self.bar_heights = [6, 10, 8, 12, 6]
             self.update()
 
@@ -223,10 +232,11 @@ class VisualizerWave(QWidget):
         self.accent_color = accent
         self.update()
 
-    def _animate(self):
-        import random
-        self.bar_heights = [random.randint(8, 34) for _ in range(5)]
-        self.update()
+    @Slot(list)
+    def _on_spectrum_received(self, heights: list):
+        if len(heights) == 5:
+            self.bar_heights = heights
+            self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -246,8 +256,8 @@ class VisualizerWave(QWidget):
             sy = (scaled.height() - self.height()) // 2
             painter.drawPixmap(0, 0, scaled, sx, sy, self.width(), self.height())
 
-            # Subtle shadow overlay for visualizer contrast
-            painter.setBrush(QBrush(QColor(0, 0, 0, 100 if self.is_playing else 20)))
+            # Dark overlay for visualizer contrast
+            painter.setBrush(QBrush(QColor(0, 0, 0, 115 if self.is_playing else 30)))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRect(0, 0, self.width(), self.height())
         else:
@@ -259,11 +269,11 @@ class VisualizerWave(QWidget):
             painter.drawRect(0, 0, self.width(), self.height())
 
         # Glowing border
-        painter.setPen(QPen(QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 140), 1.5))
+        painter.setPen(QPen(QColor(self.accent_color.red(), self.accent_color.green(), self.accent_color.blue(), 150), 1.5))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(0, 0, self.width(), self.height(), 14, 14)
 
-        # Equalizer bars
+        # Equalizer bars driven by real song sound
         if self.is_playing:
             bar_w = 4
             gap = 3
@@ -271,21 +281,23 @@ class VisualizerWave(QWidget):
             start_x = (self.width() - total_w) // 2
 
             for i, h in enumerate(self.bar_heights):
+                h_clamped = max(4, min(36, h))
                 x = start_x + (i * (bar_w + gap))
-                y = (self.height() - h) // 2
-                b_grad = QLinearGradient(x, y, x, y + h)
-                b_grad.setColorAt(0, QColor(255, 255, 255, 240))
+                y = (self.height() - h_clamped) // 2
+                b_grad = QLinearGradient(x, y, x, y + h_clamped)
+                b_grad.setColorAt(0, QColor(255, 255, 255, 245))
                 b_grad.setColorAt(1, self.accent_color)
                 painter.setBrush(QBrush(b_grad))
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawRoundedRect(x, y, bar_w, h, 2, 2)
+                painter.drawRoundedRect(x, y, bar_w, h_clamped, 2, 2)
 
         painter.end()
 
 
 class MusicPlayerWidget(BaseWidget):
     """
-    Frameless desktop Music Player widget with full-bleed cover art background.
+    Frameless desktop Music Player widget with cached high-performance background,
+    live audio visualizer, and instant playback responsiveness.
     """
 
     def __init__(
@@ -302,6 +314,7 @@ class MusicPlayerWidget(BaseWidget):
         self.artwork_manager = ArtworkManager(self)
 
         self.current_cover_pixmap: Optional[QPixmap] = None
+        self._cached_bg_pixmap: Optional[QPixmap] = None
         self.accent_color = QColor(245, 158, 11)
         self.is_internet_app_active = False
         self._is_seeking = False
@@ -328,7 +341,6 @@ class MusicPlayerWidget(BaseWidget):
         return "Music Player"
 
     def _setup_ui(self):
-        # Increased size for generous layout
         self.resize(390, 190)
         self.setMinimumSize(340, 170)
 
@@ -390,7 +402,7 @@ class MusicPlayerWidget(BaseWidget):
         bottom_layout.addWidget(self.lbl_time)
         bottom_layout.addStretch()
 
-        # Previous (Minimal double chevron)
+        # Previous
         self.btn_prev = MinimalMediaArrowButton(direction="prev", parent=self.card)
         self.btn_prev.clicked.connect(self._on_prev_clicked)
         bottom_layout.addWidget(self.btn_prev)
@@ -400,7 +412,7 @@ class MusicPlayerWidget(BaseWidget):
         self.btn_play.clicked.connect(self._on_play_clicked)
         bottom_layout.addWidget(self.btn_play)
 
-        # Next (Minimal double chevron)
+        # Next
         self.btn_next = MinimalMediaArrowButton(direction="next", parent=self.card)
         self.btn_next.clicked.connect(self._on_next_clicked)
         bottom_layout.addWidget(self.btn_next)
@@ -445,53 +457,71 @@ class MusicPlayerWidget(BaseWidget):
         # 3. Artwork manager
         self.artwork_manager.artwork_ready.connect(self._on_artwork_ready)
 
-    # --- Full-Bleed Paint Event for Vivid Cover Art Background ---
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rebuild_bg_cache()
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
+    def _rebuild_bg_cache(self):
+        """Pre-renders the scaled album background pixmap once in memory for 60fps fast rendering."""
+        margins = 10
+        card_w = max(10, self.width() - (margins * 2))
+        card_h = max(10, self.height() - (margins * 2))
+
+        bg = QPixmap(card_w, card_h)
+        bg.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(bg)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Full card bounding rectangle
-        margins = 10
-        card_rect = QRect(margins, margins, self.width() - (margins * 2), self.height() - (margins * 2))
-
         path = QPainterPath()
-        path.addRoundedRect(card_rect, 20, 20)
+        path.addRoundedRect(0, 0, card_w, card_h, 20, 20)
         painter.setClipPath(path)
 
-        # 1. Render Cover Art with Higher Opacity & Rich Vibrancy
         if self.current_cover_pixmap and not self.current_cover_pixmap.isNull():
             scaled = self.current_cover_pixmap.scaled(
-                card_rect.size(),
+                card_w, card_h,
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation
             )
-            # Center crop
-            sx = (scaled.width() - card_rect.width()) // 2
-            sy = (scaled.height() - card_rect.height()) // 2
-            painter.drawPixmap(card_rect.x(), card_rect.y(), scaled, sx, sy, card_rect.width(), card_rect.height())
+            sx = (scaled.width() - card_w) // 2
+            sy = (scaled.height() - card_h) // 2
+            painter.drawPixmap(0, 0, scaled, sx, sy, card_w, card_h)
 
-            # Translucent dark glass gradient overlay (higher image visibility)
-            overlay_grad = QLinearGradient(card_rect.topLeft(), card_rect.bottomLeft())
+            overlay_grad = QLinearGradient(0, 0, 0, card_h)
             overlay_grad.setColorAt(0, QColor(10, 15, 26, 120))
             overlay_grad.setColorAt(0.5, QColor(8, 12, 22, 160))
             overlay_grad.setColorAt(1, QColor(5, 8, 15, 200))
             painter.setBrush(QBrush(overlay_grad))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRect(card_rect)
+            painter.drawRect(0, 0, card_w, card_h)
         else:
-            # Default dark glass acrylic
-            base_grad = QLinearGradient(card_rect.topLeft(), card_rect.bottomLeft())
+            base_grad = QLinearGradient(0, 0, 0, card_h)
             base_grad.setColorAt(0, QColor(26, 32, 44, 240))
             base_grad.setColorAt(1, QColor(15, 18, 26, 250))
             painter.setBrush(QBrush(base_grad))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRect(card_rect)
+            painter.drawRect(0, 0, card_w, card_h)
 
-        # Clean glass border perfectly matching card boundaries
+        # Border
         painter.setPen(QPen(QColor(255, 255, 255, 45), 1.2))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(card_rect, 20, 20)
+        painter.drawRoundedRect(0, 0, card_w, card_h, 20, 20)
+
+        painter.end()
+        self._cached_bg_pixmap = bg
+
+    # --- Fast Paint Event Using Pre-Rendered Cache ---
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        margins = 10
+        if not self._cached_bg_pixmap:
+            self._rebuild_bg_cache()
+
+        if self._cached_bg_pixmap:
+            painter.drawPixmap(margins, margins, self._cached_bg_pixmap)
 
         painter.end()
         super().paintEvent(event)
@@ -542,9 +572,10 @@ class MusicPlayerWidget(BaseWidget):
 
     def _set_cover_pixmap(self, pixmap: QPixmap):
         self.current_cover_pixmap = pixmap
-        # Extract dominant vibrant color from cover art
-        self.accent_color = extract_dominant_color(pixmap)
+        # Instant dominant color calculation
+        self.accent_color = extract_dominant_color_fast(pixmap)
 
+        self._rebuild_bg_cache()
         self.visualizer.set_cover_art(pixmap, self.accent_color)
         self.btn_play.set_accent_color(self.accent_color)
         self.lbl_artist.setStyleSheet(f"color: {self.accent_color.name()}; font-size: 13px; font-weight: 600;")
@@ -570,9 +601,10 @@ class MusicPlayerWidget(BaseWidget):
         self._current_dur_ms = max(1000, dur_ms)
 
         if not self._is_seeking and dur_ms > 0:
-            ratio = min(1.0, pos_ms / float(dur_ms))
+            ratio = min(1.0, max(0.0, pos_ms / float(dur_ms)))
+            val = int(ratio * 1000)
             self.slider_seek.blockSignals(True)
-            self.slider_seek.setValue(int(ratio * 1000))
+            self.slider_seek.setValue(val)
             self.slider_seek.blockSignals(False)
 
         pos_str = AudioPlayerEngine.format_time(pos_ms)

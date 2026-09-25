@@ -2,6 +2,7 @@
 Windows System Media Transport Controls (SMTC) Session Watcher.
 Extracts live playing media info, cover art, timeline with smooth real-time interpolation,
 and controls from internet apps (Spotify, YouTube / Chrome / Edge, Apple Music, VLC).
+High-performance, event-driven and low-latency.
 """
 
 import asyncio
@@ -43,6 +44,8 @@ class WindowsMediaWatcher(QObject):
         self._last_pos_ms = 0
         self._last_dur_ms = 0
         self._last_pos_timestamp = time.time()
+        self._last_thumb_key = ""
+        self._cached_cover_bytes = b""
 
         self._loop = None
         self._thread = None
@@ -52,15 +55,15 @@ class WindowsMediaWatcher(QObject):
         if WINRT_AVAILABLE:
             self._start_async_worker()
 
-        # Check SMTC sessions every 1000ms
+        # Fast check timer (250ms for snappy response)
         self.poll_timer = QTimer(self)
-        self.poll_timer.setInterval(1000)
+        self.poll_timer.setInterval(250)
         self.poll_timer.timeout.connect(self._trigger_check)
         self.poll_timer.start()
 
-        # Smooth timeline tick timer (every 500ms) for real-time progress bar movement
+        # High-precision smooth timeline timer (50ms = 20fps interpolation)
         self.timeline_timer = QTimer(self)
-        self.timeline_timer.setInterval(500)
+        self.timeline_timer.setInterval(50)
         self.timeline_timer.timeout.connect(self._tick_timeline)
         self.timeline_timer.start()
 
@@ -87,7 +90,7 @@ class WindowsMediaWatcher(QObject):
         asyncio.run_coroutine_threadsafe(self._check_active_session(), self._loop)
 
     def _tick_timeline(self):
-        """Interpolates current playback position between SMTC updates."""
+        """Interpolates current playback position with high sub-second precision."""
         if self.has_active_session and self._last_is_playing and self._last_dur_ms > 0:
             elapsed = int((time.time() - self._last_pos_timestamp) * 1000)
             current_pos = min(self._last_dur_ms, self._last_pos_ms + elapsed)
@@ -131,9 +134,9 @@ class WindowsMediaWatcher(QObject):
             if not props or not props.title:
                 return
 
-            title = props.title
-            artist = props.artist or "Unknown Artist"
-            album = props.album_title or ""
+            title = props.title.strip()
+            artist = (props.artist or "Unknown Artist").strip()
+            album = (props.album_title or "").strip()
 
             # Playback status
             info = session.get_playback_info()
@@ -153,21 +156,30 @@ class WindowsMediaWatcher(QObject):
             self._last_pos_ms = pos_ms
             self._last_dur_ms = dur_ms
             self._last_pos_timestamp = time.time()
+            prev_playing = self._last_is_playing
             self._last_is_playing = is_playing
 
-            # Thumbnail bytes
-            cover_bytes = b""
-            if props.thumbnail:
-                try:
-                    stream = await props.thumbnail.open_read_async()
-                    if stream and stream.size > 0:
-                        reader = streams.DataReader(stream.get_input_stream_at(0))
-                        await reader.load_async(stream.size)
-                        buf = bytearray(stream.size)
-                        reader.read_bytes(buf)
-                        cover_bytes = bytes(buf)
-                except Exception as thumb_err:
-                    logger.debug(f"Thumbnail read error: {thumb_err}")
+            # Check if track or cover changed to avoid repeated thumbnail stream reads
+            current_track_key = f"{title}_{artist}_{album}"
+            cover_bytes = self._cached_cover_bytes
+
+            if current_track_key != self._last_thumb_key:
+                self._last_thumb_key = current_track_key
+                self._cached_cover_bytes = b""
+                cover_bytes = b""
+
+                if props.thumbnail:
+                    try:
+                        stream = await props.thumbnail.open_read_async()
+                        if stream and stream.size > 0:
+                            reader = streams.DataReader(stream.get_input_stream_at(0))
+                            await reader.load_async(stream.size)
+                            buf = bytearray(stream.size)
+                            reader.read_bytes(buf)
+                            cover_bytes = bytes(buf)
+                            self._cached_cover_bytes = cover_bytes
+                    except Exception as thumb_err:
+                        logger.debug(f"Thumbnail read error: {thumb_err}")
 
             track_info = {
                 "title": title,
@@ -183,9 +195,15 @@ class WindowsMediaWatcher(QObject):
 
             self.has_active_session = True
             self.session_status_changed.emit(True)
-            self.media_updated.emit(track_info)
 
-            if is_playing != self._last_is_playing:
+            # Emit track info
+            if (title != self._last_title or artist != self._last_artist or 
+                is_playing != prev_playing or cover_bytes):
+                self._last_title = title
+                self._last_artist = artist
+                self.media_updated.emit(track_info)
+
+            if is_playing != prev_playing:
                 self.state_changed.emit(is_playing)
 
             if dur_ms > 0:
